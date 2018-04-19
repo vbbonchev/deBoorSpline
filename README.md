@@ -1,1 +1,2 @@
-Sample project for visualisation of splines in B-spline form, drawn using De Boor's algorithm.
+#Visualisation of splines in B-spline form.
+Evaluated using De Boor's algorithm and drawn in WebGL.
