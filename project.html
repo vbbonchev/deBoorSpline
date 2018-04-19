@@ -1,0 +1,605 @@
+﻿<!DOCTYPE html>
+
+
+
+<head>
+	<meta charset="utf-8"/>
+	<title>project</title>
+
+	<script src="sideLib.js"></script>	
+	
+	<script id="vshader" type="x-shader/x-vertex">
+	//vertex shader - обяснени по-надолу
+		attribute vec2 aXY;
+		attribute vec3 aRGB;
+		varying vec3 vRGB;
+		void main ()
+		{
+			gl_Position = vec4(aXY,0,1);
+			gl_PointSize = 10.0;
+			vRGB = aRGB;
+		}
+	</script>
+	
+	
+	<script id="fshader" type="x-shader/x-fragment">
+	//fragment shader - обяснени по-надолу
+		precision mediump float;
+		varying vec3 vRGB;
+		void main( )
+		{
+			gl_FragColor = vec4(vRGB,1);
+		}
+	</script>
+	
+	<script>
+	
+
+	//връща координати на точка от крива на безие с четири контролни точки и коефициент мю
+	//използва (1-t)^3*p0 + 3(1-t)^2*p1 + 3(1-t)^2*p3 + t^3*p4
+	function bezier4mu(x1,y1,x2,y2,x3,y3,x4,y4,mu)
+	{
+		var mum1,mum13,mu3;
+		var pointLocation=[];
+		mum1 = 1 - mu;
+		mum13 = mum1 * mum1 * mum1;
+		mu3 = mu * mu * mu;
+		pointLocation[0] = mum13*x1 + 3*mu*mum1*mum1*x2 + 3*mu*mu*mum1*x3 + mu3*x4;
+		pointLocation[1] = mum13*y1 + 3*mu*mum1*mum1*y2 + 3*mu*mu*mum1*y3 + mu3*y4;
+		return pointLocation;
+	}
+	
+	//по четири контролни точки връща масив от numLines точки от кривата на безие с тези контролни точки
+	//връща ги във формата (x,y,R,G,B), където R,G,B са цветовете, взети от променливата color
+	//използва горната функция bezier4mu за генериране на точките
+	function besierPoints(x1,y1,x2,y2,x3,y3,x4,y4,numLines,color)
+	{
+
+		
+		var points=[];
+		for(i=0;i<=numLines;i++)
+		{
+			currentMu=i/numLines;
+			var point= bezier4mu(x1,y1,x2,y2,x3,y3,x4,y4,currentMu);
+			points[5*i]=point[0];
+			points[5*i+1]=point[1];
+			points[5*i+2]=color[0];
+			points[5*i+3]=color[1];
+			points[5*i+4]=color[2];
+		}
+		return points;
+	}
+	
+	//по подаден масив от контролни точки връща масив от всички точки, принадлежащи на криви на безие
+	function allBesierPoints(ctrlPoints,numLines,color,numControlPoints){
+		var _besierPoints=[];
+		
+		var _numbesierPoints=(numControlPoints-1)*2+(numControlPoints);
+		console.log(numControlPoints);
+		console.log(_numbesierPoints);
+		var i=0;
+		while(i<_numbesierPoints){
+			var x1=ctrlPoints[5*i];
+			var y1=ctrlPoints[5*i+1];
+			var x2=ctrlPoints[5*(i+1)];
+			var y2=ctrlPoints[5*(i+1)+1];
+			var x3=ctrlPoints[5*(i+2)];
+			var y3=ctrlPoints[5*(i+2)+1];
+			var x4=ctrlPoints[5*(i+3)];
+			var y4=ctrlPoints[5*(i+3)+1];
+			
+			var newPoints=besierPoints(x1,y1,x2,y2,x3,y3,x4,y4,numLines,color);
+			_besierPoints=_besierPoints.concat(newPoints);
+			i+=3;
+		}
+		console.log(_besierPoints);
+
+		return _besierPoints;
+	}
+	
+	//получава масив от контролни точки на de Boor
+	//връща масив с всички контролни точки за криви на безие 
+	function allControlPoints(cubicBezControlPoints,numControlPoints,color)
+	{
+		var controlPoints=[];	
+		for(i=0;i<numControlPoints;i++){
+				
+				//ако сме на първата контролна точка си "измисляме" делта0, равна на делта1
+				if(i==0){
+					var currentDeltas=[deltas[0],deltas[0],deltas[1]];
+					//нормализираме трите делти, за да получим после отношенията им
+					var normalDeltas=normaliseDeltas(currentDeltas);
+					
+					//първа контролна точка за първата крива на безие - взимаме я от правата между първите две точки на de Boor с коефициент първата нормализирана делта
+					//тук не добавяме първата точка от кривата на безие (съвпадаща с първата точка на de Boor) - тя се добавя по-късно
+					var firstControl=pointBetween(cubicBezControlPoints[0],cubicBezControlPoints[1],cubicBezControlPoints[5],cubicBezControlPoints[6],normalDeltas[0]);
+					firstControl=firstControl.concat(color);
+					
+					//втора контролна точка за първата крива на безие - взимаме я от правата между първите две точки на de Boor с коефициент първата нормализирана делта плюс втората
+					var  secondControl=pointBetween(cubicBezControlPoints[0],cubicBezControlPoints[1],cubicBezControlPoints[5],cubicBezControlPoints[6],normalDeltas[0]+normalDeltas[1]);
+					secondControl=secondControl.concat(color);
+					
+					controlPoints= controlPoints.concat(firstControl);
+					controlPoints= controlPoints.concat(secondControl);
+				}
+				if(i!=0 && i!==(numControlPoints-1)){
+					//взимаме координатите на текущата и следващата точка на де Бор
+					var thisPx=cubicBezControlPoints[i*5];
+					var thisPy=cubicBezControlPoints[i*5+1];
+					
+					var nextPx=cubicBezControlPoints[(i+1)*5];
+					var nextPy=cubicBezControlPoints[(i+1)*5+1];
+					
+					//нормализираме делтите
+					var _currentDeltas=[deltas[i-1],deltas[i],deltas[i+1]];
+					var normalDeltas=normaliseDeltas(_currentDeltas);
+					
+					//намираме първа контролна точка
+					var firstControl=pointBetween(thisPx,thisPy,nextPx,nextPy,normalDeltas[0]);
+					firstControl=firstControl.concat(color);
+					
+					//намираме втора контролна точка
+					var secondControl=pointBetween(thisPx,thisPy,nextPx,nextPy,normalDeltas[0]+normalDeltas[1]);
+					secondControl=secondControl.concat(color);
+					
+					//намираме предната контролна точка
+					var prevControl=[controlPoints[controlPoints.length-5],
+									controlPoints[controlPoints.length-4]];
+					
+					//намираме контролната точка между двете
+					var coefficient=deltas[i-1]/(deltas[i-1]+deltas[i]);
+					controlBetween=pointBetween(prevControl[0],prevControl[1],firstControl[0],firstControl[1],coefficient);
+					controlBetween=controlBetween.concat(color);
+					
+					//вкарваме контролните точки (3 на брой, тъй като първата съвпада с последната на предната крива)
+					controlPoints= controlPoints.concat(controlBetween);
+					controlPoints= controlPoints.concat(firstControl);
+					controlPoints= controlPoints.concat(secondControl);
+				}
+		}
+	return controlPoints;
+	}
+	
+	
+	
+	//взима масив от делти и ги нормализира (така че сбора им да е 1)
+	function normaliseDeltas(deltas)
+	{
+		var normalisedDeltas=[];
+		var total=0;
+		
+		for(j=0;j<deltas.length;j++){
+		total+=deltas[j]*10;
+		}
+		
+		for(k=0;k<deltas.length;k++){
+		normalisedDeltas[k]=(deltas[k]*10)/total;
+		}
+		<!-- console.log(deltas,normalisedDeltas); -->
+		return normalisedDeltas;
+	}
+	
+	//генерира точки (x,y,R,G,B) за делтите спрямо масива deltas
+	function generateDeltasPoints(){
+	
+	var deltasLinePointCoordinates=[];
+	deltasLinePointCoordinates=deltasLinePointCoordinates.concat(deltasStartPoint);
+	deltasLinePointCoordinates=deltasLinePointCoordinates.concat([0.0,0.0,0.0]);
+	var deltaSumSoFar=0;
+	for(var i=0;i<deltas.length-1;i++){
+		deltaSumSoFar+=normalisedDeltas[i];
+		deltasLinePointCoordinates=deltasLinePointCoordinates.concat(pointBetween(deltasStartPoint[0],deltasStartPoint[1],deltasEndPoint[0],deltasEndPoint[1],deltaSumSoFar));
+		deltasLinePointCoordinates=deltasLinePointCoordinates.concat(DELTAS_LINE_COLOR);	
+	}
+		deltasLinePointCoordinates=deltasLinePointCoordinates.concat(deltasEndPoint);
+		deltasLinePointCoordinates=deltasLinePointCoordinates.concat([0.0,0.0,0.0]);
+	
+	return deltasLinePointCoordinates;
+
+}
+	
+//връща точка между (x1,y1) и (x2,y2) с коефициент at   (at принадлежи на интервала [0,1])
+function pointBetween(x1,y1,x2,y2,at){
+	var newX=x1+(x2-x1)*at;
+	var newY=y1+(y2-y1)*at;
+	var point=[newX,newY];
+	return point;
+}
+
+//връща позиция в пиксели от webGL спрямо прозореца
+function getRelativeMousePosition(event, target){
+	target = target || event.target;
+	var rect = target.getBoundingClientRect();
+
+	return {
+	x: event.clientX - rect.left,
+	y: event.clientY - rect.top,
+	}
+}
+
+
+//връща обект с x и y координати в canvas
+function getNoPaddingNoBorderCanvasRelativeMousePosition(event, target) {
+  target = target || event.target;
+  var pos = getRelativeMousePosition(event, target);
+
+  pos.x = pos.x * target.width  / target.clientWidth;
+  pos.y = pos.y * target.height / target.clientHeight;
+
+  return pos;  
+}
+
+//флагове за следене на действията на мишката
+	var mouseMoveFlag=false;
+	var touchedSomePoint=false;
+	var movingSomePoint=false;
+	
+	var touchedSomeDelta=false;
+	var movingSomeDelta=false;
+	
+	var pressedXcoordinate=0;
+	var pressedYcoordinate=0;
+	
+	var capturePointNumber=0;
+	var capturedDeltaPointNumber=0;
+	
+	var pressedDeltaXcoordinate=0;
+	var pressedDeltaXcoordinate=0;
+	
+	var prevPoint=0;
+	var nextPoint=0;
+	
+	//var element = xxxx;
+	window.addEventListener("mousedown", e => {
+	
+		const pos = getNoPaddingNoBorderCanvasRelativeMousePosition(e,gl.canvas);
+		// pos e v pixel koordinati
+		// dolnite uravneniq go prevrushtat v webGL koordinati ( v interval [-1;1])
+		const x = pos.x / gl.canvas.width  *  2 - 1;
+		const y = pos.y / gl.canvas.height * -2 + 1;
+		
+		squareSide=0.06;
+		
+		//прихваща дали мишката е задържана върху тякоя от контролните точки
+		for (var i = 0; i < cubicBezControlPointsCoordinates.length; i=i+2) {
+			//ако е задържана, записва номера на точката в capturePointNumber
+			if(Math.abs(x - cubicBezControlPointsCoordinates[i])< squareSide/2.0 && Math.abs(y - cubicBezControlPointsCoordinates[i+1])<squareSide/2.0){	
+				touchedSomePoint=true;
+				pressedXcoordinate=cubicBezControlPointsCoordinates[i];
+				pressedYcoordinate=cubicBezControlPointsCoordinates[i+1];
+				movingSomePoint=true;
+				for(var i=0;i<cubicBezControlPointsCoordinates.length;i=i+2){
+						if(cubicBezControlPointsCoordinates[i]==pressedXcoordinate && cubicBezControlPointsCoordinates[i+1]==pressedYcoordinate){
+						capturePointNumber=i;
+						cubicBezControlPointsCoordinates[i]=x;
+						cubicBezControlPointsCoordinates[i+1]=y;
+						}
+					}
+
+			}
+		}
+		
+		//прихваща дали мишката е задържана върху тякоя от контролните делта точки
+		for(var i=5;i<deltasCoordinates.length-5;i=i+5){
+			//ако е задържана, записва номера на точката в capturePointNumber
+			if(Math.abs(x - deltasCoordinates[i])<squareSide/2.0 && Math.abs(y - deltasCoordinates[i+1])<squareSide/2.0){	
+				touchedSomeDelta=true;
+				pressedDeltaXcoordinate=deltasCoordinates[i];
+				pressedDeltaYcoordinate=deltasCoordinates[i+1];
+				movingSomeDelta=true;
+				//ако да - запомня координатите й в captureDeltaPointNumber
+				for(var i=5;i<deltasCoordinates.length-5;i=i+5){
+						if(deltasCoordinates[i]==pressedDeltaXcoordinate && deltasCoordinates[i+1]==pressedDeltaYcoordinate){
+						captureDeltaPointNumber=i;
+						nextPoint=i+5;
+						prevPoint=i-5;
+						deltasCoordinates[i]=x;
+						
+						}
+					}
+				
+			}
+		}
+		
+	}, false);
+	window.addEventListener("mousemove", e=>{
+		
+		mouseMoveFlag = true;
+		//ако е вдигнат флага, че местим контролна точка
+		if(movingSomePoint==true){
+		
+			pos = getNoPaddingNoBorderCanvasRelativeMousePosition(e, gl.canvas);
+		
+			// pos e v pixel koordinati
+			// dolnite uravneniq go prevrushtat v webGL koordinati ( v interval [-1;1])
+			x = pos.x / gl.canvas.width  *  2 - 1;
+			y = pos.y / gl.canvas.height * -2 + 1;
+			if(x<=1.0 && x>=-1.0 && y>=-1.0 && y<=1.0){
+			cubicBezControlPointsCoordinates[capturePointNumber]=x;
+			cubicBezControlPointsCoordinates[capturePointNumber+1]=y;
+			start();
+			}
+		}
+		//ако е вдигнат флага, че местим делта точка
+		if(movingSomeDelta==true){
+			
+			pos = getNoPaddingNoBorderCanvasRelativeMousePosition(e, gl.canvas);
+			
+			x = pos.x / gl.canvas.width  *  2 - 1;
+			y = pos.y / gl.canvas.height * -2 + 1;
+
+			if(x<1.0 && x>-1.0 && x<=(deltasCoordinates[nextPoint]-0.02) && x>=(deltasCoordinates[prevPoint]+0.02)){
+				deltasCoordinates[captureDeltaPointNumber]=x;
+
+				var newNormalisedDeltas=[];
+				
+				var range=deltasEndPoint[0]-deltasStartPoint[0];
+				var intervalSoFar=0;
+				//currentDeltaMousePos=deltasCoordinates[i]-deltasStartPoint[0]
+				//изчислява от координатите на преместената делта какви трябва да бъдат новите стойности на делтите(смята дължината на интервалите по между им)
+				for(var i=5;i<deltasCoordinates.length;i+=5){
+				thisDelta=deltasCoordinates[i]-deltasStartPoint[0]-intervalSoFar;
+				newNormalisedDeltas.push(thisDelta);
+				intervalSoFar=intervalSoFar+thisDelta;
+				}
+				
+				for(var i=0;i<newNormalisedDeltas.length;i++){
+				deltas[i]=newNormalisedDeltas[i]*100;
+				}
+				start();
+			}
+		}
+	
+	}, false);
+	
+	window.addEventListener('mouseup', e => {
+
+		const pos = getNoPaddingNoBorderCanvasRelativeMousePosition(e, gl.canvas);
+		
+		// pos е в пиксел координати
+		// превръщаме го в webGL-ски координати ( в интервал [-1;1])
+		const x = pos.x / gl.canvas.width  *  2 - 1;
+		const y = pos.y / gl.canvas.height * -2 + 1;
+		
+		//добавя нова точка
+		if(mouseMoveFlag==false && touchedSomePoint==false){
+		
+			cubicBezControlPointsCoordinates.push(x,y);
+			numControlPoints=numControlPoints+1;
+			deltas.push(deltas[deltas.length-1]);
+			normalisedDeltas=normaliseDeltas(deltas);
+			deltasCoordinates=generateDeltasPoints();
+			start();
+		}
+		else{
+
+			//Ако сме натиснали два пъти върху съществуваща точка
+			if(mouseMoveFlag==false && touchedSomePoint==true && numControlPoints>1){
+				console.log("dblsclick");
+				console.log(cubicBezControlPointsCoordinates);
+				//намира точката и я изтрива, заедно със съответната делта
+				for(var i=0;i<cubicBezControlPointsCoordinates.length;i=i+2){
+					if(cubicBezControlPointsCoordinates[i]==pressedXcoordinate && cubicBezControlPointsCoordinates[i+1]==pressedYcoordinate){
+						cubicBezControlPointsCoordinates.splice(i,2);
+						numControlPoints=numControlPoints-1;
+						deltas.splice(i/2,1);
+						normalisedDeltas=normaliseDeltas(deltas);
+						deltasCoordinates=generateDeltasPoints();
+					}
+				}
+				console.log(cubicBezControlPointsCoordinates);
+			
+			
+				
+				
+				start();
+			}
+		}
+		//нулираме флаговете при вдигане на мишката
+		mouseMoveFlag=false;
+		touchedSomePoint=false;
+		movingSomePoint=false;
+	
+		touchedSomeDelta=false;
+		movingSomeDelta=false;
+	
+		pressedXcoordinate=0;
+		pressedYcoordinate=0;
+	
+		capturePointNumber=0;
+		capturedDeltaPointNumber=0;
+	
+		pressedDeltaXcoordinate=0;
+		pressedDeltaXcoordinate=0;
+		
+		prevPoint=0;
+		nextPoint=0;
+		});
+	
+	</script>
+
+	<script>
+		
+		var CONTROL_POINTS_COLOR=[1.0,0.0,0.0];
+		var LINE_COLOR=[0.0,0.0,1.0];
+		var DELTAS_LINE_COLOR=[0.5,0.5,0.5];
+
+		var deltasStartPoint=[0.1,-0.8];
+		var deltasEndPoint=[0.9,-0.8];
+		var numLines=30;//per besier curve
+		var cubicBezControlPointsCoordinates=[
+		//  X,    Y       	
+		-0.7,-0.1,  
+		-0.4,0.7, 
+		0.4,0.7, 
+		0.7,-0.1
+		];
+		var numControlPoints=4;
+		
+		//въвеждаме делти като отношения, после ги нормализираме
+		var deltas=[1,1,1,1];
+		var normalisedDeltas=normaliseDeltas(deltas);
+		var deltasCoordinates = generateDeltasPoints();
+		
+		
+		function start(){
+		
+
+		
+			normalisedDeltas=normaliseDeltas(deltas);
+			gl = getContext("_canvas");
+			glprog = getProgram("vshader","fshader");
+			
+			aXY = gl.getAttribLocation(glprog,"aXY");
+			aRGB = gl.getAttribLocation(glprog,"aRGB");
+			
+			var cubicBezControlPoints=[];
+			
+			//залепя цвят(R,G,B) към координатите от cubicBezControlPointsCoordinates(x,y) и ги превръща в точки(x,y,R,G,B), които можем да подадем на шейдъра 
+			for(l=0;l<numControlPoints;l++)
+			{
+				var newPoint=[];
+				newPoint[0]=cubicBezControlPointsCoordinates[2*l];
+				newPoint[1]=cubicBezControlPointsCoordinates[2*l+1];
+				
+				newPoint=newPoint.concat(CONTROL_POINTS_COLOR);
+				cubicBezControlPoints=cubicBezControlPoints.concat(newPoint);
+				
+			}
+			
+			//формат на данните - контролни точки на de Boor, контролни точки на кривите,  
+			var data = [ ];
+			
+			//добавяме контролните точки на deBoor
+			data=data.concat(cubicBezControlPoints);
+			
+			
+			//взимаме първата и последната точка на de Boor
+			var firstPoint=cubicBezControlPoints.slice(0,5);
+			var lastPoint=cubicBezControlPoints.slice((numControlPoints-1)*5);
+			
+			//смятаме координатите на контролните точки за кривите на Безие
+			var ctrlPoints=allControlPoints(cubicBezControlPoints,numControlPoints,[0.0, 1.0,0.0]);
+			
+			//добавяме към генерираните контролни точки за кривите на Безие съответно първата и последната точка на de Boor (защото съвпадат)
+			ctrlPoints=firstPoint.concat(ctrlPoints);
+			ctrlPoints=ctrlPoints.concat(lastPoint);
+			data=data.concat(ctrlPoints);
+
+			//според пълния набор от контролни точки намираме пълния набор от точки от кривите на Безие, за да можем после да рисуваме с тях
+			var _allBesierPoints=allBesierPoints(ctrlPoints,numLines,LINE_COLOR,numControlPoints);
+			data=data.concat(_allBesierPoints);
+
+			
+			//добяме координатите на делтите на края, за да ги нарисуваме и тях
+			data=data.concat(deltasCoordinates);
+			
+			
+			var buf = gl.createBuffer();
+			//инстанцираме буфера от данни и му казваме, че точките ще са в формат x,y,R,G,B
+			buf = fillBuffer(buf, data);
+			
+			//смятаме броя контролни точки на Безие(общо)
+			var numbesierPoints=(numControlPoints-1)*2+(numControlPoints);
+			
+			console.log(deltas)
+			if(numControlPoints<3){
+				//рисуваме вече подадените в буфера точки 
+					gl.clearColor(0.9,0.9,0.9,1.0);
+					gl.clear(gl.COLOR_BUFFER_BIT);
+					gl.drawArrays(gl.POINTS,0,numControlPoints);
+					<!-- gl.drawArrays(gl.LINE_STRIP,0,numControlPoints); -->
+			}
+			else{draw();}
+			function draw()
+			{
+				//рисуваме вече подадените в буфера точки 
+				gl.clearColor(0.9,0.9,0.9,1.0);
+				gl.clear(gl.COLOR_BUFFER_BIT);
+				gl.drawArrays(gl.POINTS,0,numControlPoints);
+				gl.drawArrays(gl.LINE_STRIP,0,numControlPoints);
+				
+				gl.drawArrays(gl.LINE_STRIP,numControlPoints,numbesierPoints);
+				gl.drawArrays(gl.POINTS,numControlPoints, numbesierPoints);
+				
+				gl.drawArrays(gl.LINE_STRIP,numControlPoints+numbesierPoints,(numControlPoints-1)*31);
+				
+				gl.drawArrays(gl.POINTS,numControlPoints + numbesierPoints + numControlPoints*31,deltas.length+1);
+				gl.drawArrays(gl.LINE_STRIP,numControlPoints + numbesierPoints + numControlPoints*31,deltas.length+1);
+			};
+		}
+		
+		
+		
+		
+		
+		function fillBuffer(buf,data){
+			
+			gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+			gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
+			
+
+			gl.vertexAttribPointer(
+				aXY,
+				2,
+				gl.FLOAT,
+				false,
+				5* Float32Array.BYTES_PER_ELEMENT,
+				0);
+			gl.vertexAttribPointer(
+				aRGB,
+				3,
+				gl.FLOAT,
+				false,
+				5 * Float32Array.BYTES_PER_ELEMENT,
+				2 * Float32Array.BYTES_PER_ELEMENT );
+
+			gl.enableVertexAttribArray(aXY);
+			gl.enableVertexAttribArray(aRGB);
+		}
+	</script>	
+	
+
+	
+<head>
+
+<body onload="start()">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<h2>Рисуване на сплайн крива по дадени точки на де Бор</h2> 
+	
+	<noscript>
+		Искаме JavaScript, но няма!
+	</noscript>
+	<div class=container>
+	
+	<canvas id="_canvas" width="1000" height="600" style="border: solid;">
+		Искаме canvas, но няма!
+	</canvas>
+	<div id="textBox">
+	 Легенда:</br></br>
+	 Double click на празно място - поставя нова точка</br></br>
+	 Double click върху контролна точка на De Boor- изтрива точката</br></br>
+	 Влачене на контролна точка - мести контролната точка</br></br>
+	 Влачене на делта точка - мести делта точката </br></br>
+	 Презареждане на страницата - връща в начална позиция</br></br>
+	 
+	
+	
+	
+	</div>
+	
+	</div>
+</body>
+
+<style>
+.container #_canvas{  float:left }
+.container #textBox { 
+border:double;
+width: 300px; 
+height: 500px; 
+float: left; 
+margin-left: 3px; }
+</style>
+
+
+
